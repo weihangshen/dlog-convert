@@ -39,6 +39,24 @@ python convert.py /path/to/videos --dry-run
 
 程序会读取 DJI `djmd` 数据轨首包里的色彩模式字段，并以此区分 D-Log 与普通视频。文件名中的 `_D` 不是色彩模式标记，不参与判断；仅当 `djmd` 无法读取时，才会将 FFprobe 发现的明确 D-Log 文本元数据作为备用依据。明确识别为 D-Log 的视频显示绿色 `[D-Log]` 并默认勾选，明确识别为普通模式的显示 `[普通]`；检测为 DJI 但无法确认色彩模式的素材才显示 `[DJI?]`。列表始终按文件名排序。
 
+## 恢复导出视频时间
+
+`timestamp.py` 会优先读取 DJI 导出视频中的 `com.apple.quicktime.creationdate` 原始拍摄时间，无损封装为 MP4，并以本地拍摄时间命名，例如 `DJI_20260830140410.mp4`。输出文件默认位于输入目录的 `output` 子目录，同时恢复容器创建时间、文件修改时间，以及 macOS/Windows 文件创建时间。
+
+```bash
+conda activate dlog
+python timestamp.py /path/to/videos
+
+# 递归扫描，或先预览识别结果
+python timestamp.py /path/to/videos --recursive
+python timestamp.py /path/to/videos --dry-run
+
+# 明确指定文件名所用时区
+python timestamp.py /path/to/videos --timezone Asia/Shanghai
+```
+
+如果多个视频的拍摄时间精确到同一秒，或者 `output` 中已经存在同名文件，后续文件会自动命名为 `_01`、`_02`。脚本始终生成新文件，不覆盖源视频或已有输出。
+
 ## 编码与硬件
 
 - macOS：检测 Apple VideoToolbox。Apple Silicon 的 H.265 媒体引擎可用于硬件编码；当前 Apple 芯片不提供 AV1 硬件编码时会自动只列出软件 AV1。
