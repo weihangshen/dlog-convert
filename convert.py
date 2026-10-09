@@ -245,7 +245,12 @@ def _first_video_stream(probe: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
-DjiColorMode = Literal["dlog", "normal"]
+DjiColorMode = Literal["dlog", "dlog_m", "normal"]
+
+# djmd video descriptor -> field 2 -> field 3 -> enum field 1.
+# Pocket 4 D-Log uses 2; DJI Flip D-Log M uses 19 (0x13).
+# An omitted enum in an empty color message is the protobuf default, normal.
+DJI_COLOR_MODES: dict[int, DjiColorMode] = {0: "normal", 2: "dlog", 19: "dlog_m"}
 
 
 def _read_protobuf_varint(data: bytes, offset: int) -> tuple[int, int]:
@@ -363,7 +368,7 @@ def _dji_color_mode_from_djmd_packet(packet: bytes) -> DjiColorMode | None:
                     return None
                 for color_number, color_wire, color_value in color_fields:
                     if color_number == 1 and color_wire == 0 and isinstance(color_value, int):
-                        return "dlog" if color_value == 2 else "normal"
+                        return DJI_COLOR_MODES.get(color_value)
                 return None
     return None
 
@@ -439,9 +444,14 @@ def video_info_from_probe(
         or bool(codec_tags.intersection({"djmd", "dbgi"}))
     )
     metadata_log = bool(re.search(r"d[\s_-]?log(?:[\s_-]?m)?", searchable_metadata))
-    is_dlog = is_dji and (dji_color_mode == "dlog" or (dji_color_mode is None and metadata_log))
+    is_dlog = is_dji and (
+        dji_color_mode in {"dlog", "dlog_m"}
+        or (dji_color_mode is None and metadata_log)
+    )
 
-    if dji_color_mode == "dlog":
+    if dji_color_mode == "dlog_m":
+        reason = "DJI djmd 色彩模式标记为 D-Log M"
+    elif dji_color_mode == "dlog":
         reason = "DJI djmd 色彩模式标记为 D-Log"
     elif dji_color_mode == "normal":
         reason = "DJI djmd 色彩模式为普通"
@@ -610,7 +620,8 @@ def human_bitrate(bitrate: int) -> str:
 
 def video_choice_title(video: VideoInfo) -> list[tuple[str, str]]:
     if video.is_dlog:
-        prefix = ("class:dlog", "[D-Log] ")
+        label = "[D-Log M]" if video.dji_color_mode == "dlog_m" else "[D-Log]"
+        prefix = ("class:dlog", f"{label} ")
     elif video.dji_color_mode == "normal":
         prefix = ("class:muted", "[普通]   ")
     elif video.is_dji:
@@ -1033,7 +1044,8 @@ def print_video_table(videos: Sequence[VideoInfo]) -> None:
     reset = "\033[0m" if sys.stdout.isatty() else ""
     for video in videos:
         if video.is_dlog:
-            marker = f"{green}[D-Log]{reset}"
+            label = "[D-Log M]" if video.dji_color_mode == "dlog_m" else "[D-Log]"
+            marker = f"{green}{label}{reset}"
         elif video.dji_color_mode == "normal":
             marker = "[普通]"
         elif video.is_dji:

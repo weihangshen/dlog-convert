@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import convert
@@ -39,6 +41,48 @@ class DLogConverterTests(unittest.TestCase):
             convert.parse_ffprobe_hex_data(dump),
             bytes.fromhex("120f0a071a05766964656f12041a020802"),
         )
+
+    def test_flip_real_video_descriptors(self):
+        # Video descriptors extracted from 0107 (D-Log M) and 0122 (normal).
+        # Excludes device serial numbers and flight telemetry from the packets.
+        fixtures = {
+            "dlog_m": (
+                "125b0a071a05766964656f123b0a1a10011801220a444a4920464338353832"
+                "2d8fc26f4230d6a9f62312190a0a204143205665722e3033120b31302e3030"
+                "2e31362e31311a0208131a1308801e10f0101d8fc26f422001280a30044001"
+            ),
+            "normal": (
+                "125b0a071a05766964656f12390a1a10011801220a444a4920464338353832"
+                "2d8fc2ef4130e393f27112190a0a204143205665722e3033120b31302e3030"
+                "2e31362e31311a001a1508801e10f0101d8fc2ef412001280a300438034001"
+            ),
+        }
+        for expected, packet_hex in fixtures.items():
+            with self.subTest(expected=expected):
+                mode = convert._dji_color_mode_from_djmd_packet(bytes.fromhex(packet_hex))
+                self.assertEqual(mode, expected)
+                # Both samples are HEVC Main 10 / BT.709: these aren't Log signals.
+                probe = {
+                    "streams": [{"codec_type": "video", "codec_name": "hevc",
+                                 "pix_fmt": "yuv420p10le", "color_transfer": "bt709"}],
+                    "format": {"size": "1000", "tags": {"encoder": "DJI FLIP"}},
+                }
+                video = convert.video_info_from_probe(Path("DJI_example_D.MP4"), probe, mode)
+                self.assertEqual(video.is_dlog, expected == "dlog_m")
+                self.assertEqual(convert.default_video_selected(video), expected == "dlog_m")
+                label = "[D-Log M]" if expected == "dlog_m" else "[普通]"
+                self.assertIn(label, convert.video_choice_title(video)[0][1])
+                output = StringIO()
+                with redirect_stdout(output):
+                    convert.print_video_table([video])
+                self.assertIn(label, output.getvalue())
+
+    def test_unknown_or_damaged_djmd_does_not_become_normal(self):
+        unknown = bytes.fromhex("120f0a071a05766964656f12041a02087f")
+        self.assertIsNone(convert._dji_color_mode_from_djmd_packet(unknown))
+        self.assertIsNone(convert._dji_color_mode_from_djmd_packet(unknown[:-1]))
+        explicit_normal = bytes.fromhex("120f0a071a05766964656f12041a020800")
+        self.assertEqual(convert._dji_color_mode_from_djmd_packet(explicit_normal), "normal")
 
     def test_djmd_color_mode_overrides_ambiguous_d_suffix(self):
         with tempfile.TemporaryDirectory() as directory:
